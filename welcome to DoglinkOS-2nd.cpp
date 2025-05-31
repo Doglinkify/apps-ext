@@ -34,9 +34,9 @@ int main()
                 break;
 
             case 3:
-                cout <<""<< endl;
-                cout <<""<< endl;
-                cout <<""<< endl;
+                cout <<"c#程序"<< endl;
+                cout <<"c++程序"<< endl;
+                cout <<"rust程序"<< endl;
                 cout <<""<< endl;
                 break;
                 
