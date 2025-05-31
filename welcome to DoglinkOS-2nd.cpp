@@ -21,7 +21,7 @@ int main()
         
         switch(choice) {
             case 1:
-                cout <<""<< endl;
+                cout <<"Doglink由ruster开发整个系统完全支持gpl v3.0协议是一款极具现代化的系统"<< endl;
                 cout <<""<< endl;
                 cout <<""<< endl;
                 break;
