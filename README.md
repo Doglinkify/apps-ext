@@ -1,9 +1,1 @@
-这是一个多语言版的doglinkos简介与编写指南使用请在系统作者完成c/c++标准库后放入apps文件夹
-這是一個多語言版的doglinkos簡介與編寫指南使用請在系統作者完成c/c++標準庫後放入apps文件夾
-This is a multilingual version of the DoglinkOS introduction and writing guide. Please place it in the apps folder after the system developer completes the C/C++ standard library
-软件中文本将以三种语言显示以后会跟多的doglinkos暂不显示除英语外其他语言
-軟件中文本將以三種語言顯示以後會跟多的doglinkos暫不支持顯示除英語外其他語言
-In the software, the text will be displayed in three languages. More languages will be added later. Currently, Doglinkos does not support displaying languages other than English
-感谢使用
-感謝使用
-Thanks to 
+这是一个doglinkos-2ndapp仓库
