@@ -191,7 +191,7 @@ pub fn read_line(buf: &mut [u8]) -> usize {
 
 pub fn sys_sleep_ms(ms: u64) {
     let start = sys_getticks() as u64;
-    while (sys_getticks() as u64).wrapping_sub(start) < ms {
+    while (sys_getticks() as u64).wrapping_sub(start) < ms / 10 {
         core::hint::spin_loop();
     }
 }
@@ -257,7 +257,7 @@ impl PlatformBackend for DlosBackend {
     }
 
     fn ticks_ms(&self) -> u64 {
-        sys_getticks() as u64
+        sys_getticks() as u64 * 10
     }
 
     fn sleep_ms(&mut self, ms: u64) {
