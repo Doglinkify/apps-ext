@@ -76,7 +76,7 @@ doesn't currently compile on `x86_64-unknown-none`).
 
 ```
 Header (28 bytes, LE):
-  [0..4]   "DLV1"
+  [0..4]   "DLV1" or "DLV2"
   [4..8]   width
   [8..12]  height
   [12..16] fps_num
@@ -84,9 +84,10 @@ Header (28 bytes, LE):
   [20..24] frame_count
   [24..28] reserved (0)
 
-frame_count frame entries, each:
+DLV1 entries contain a size and an independent payload. DLV2 entries contain:
   [0..4]   compressed_size
-  [4..4+N] raw LZMA2 payload (decompresses to width*height*4 bytes of BGRA)
+  [4]      flags (bit 0: keyframe)
+  [5..5+N] raw LZMA2 payload (BGRA keyframe or XOR delta from the prior frame)
 ```
 
 Per-frame LZMA2 compression typically achieves 3-6× on real video.

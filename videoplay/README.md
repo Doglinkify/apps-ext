@@ -9,7 +9,8 @@ to run on the bare-metal framebuffer with no GPU, no audio, and no std.
 
 - **Two file formats**:
   - **AVI container** with MJPEG codec (H.264 with `openh264` on Linux sim only).
-  - **DLV** — custom format: per-frame raw LZMA2-compressed BGRA pixels.
+  - **DLV** — custom format: raw LZMA2-compressed BGRA pixels with periodic
+    keyframes and XOR frame deltas (DLV2), while reading legacy DLV1 files.
     Designed for targets where H.264 software decoding is too heavy.
 - **Modern minimal UI** drawn directly on the framebuffer:
   - Slim bottom control bar with progress, playhead knob, play/pause icon.
@@ -33,11 +34,12 @@ Result: `target/x86_64-unknown-none/release/videoplay` (~224 KB).
 
 ## DLV file format
 
-Custom container for `no_std` targets:
+Custom container for `no_std` targets. DLV1 remains supported for old files;
+new files use DLV2:
 
 ```
 Header (28 bytes, LE):
-  [0..4]   "DLV1"
+  [0..4]   "DLV2"
   [4..8]   width
   [8..12]  height
   [12..16] fps_num
@@ -47,7 +49,9 @@ Header (28 bytes, LE):
 
 frame_count frame entries, each:
   [0..4]   compressed_size
-  [4..4+N] raw LZMA2 payload (decompresses to width*height*4 bytes of BGRA)
+  [4]      flags (bit 0: keyframe)
+  [5..5+N] raw LZMA2 payload. Keyframes decompress to BGRA; other frames
+           decompress to a bytewise XOR delta from the previous frame.
 ```
 
 Uses raw LZMA2 streams (not the xz container) so the bare-metal target

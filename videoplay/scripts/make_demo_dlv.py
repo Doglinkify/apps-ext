@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Generate a DLV (DoglinkOS Lossless Video) sample file.
+"""Generate a DLV2 (DoglinkOS Lossless Video) sample file.
 
-DLV format (see src/container/dlv.rs):
+DLV2 format (see src/container/dlv.rs):
   Header (28 bytes, all LE):
-    [0..4]   "DLV1"
+    [0..4]   "DLV2"
     [4..8]   width
     [8..12]  height
     [12..16] fps_num
@@ -12,7 +12,8 @@ DLV format (see src/container/dlv.rs):
     [24..28] reserved (0)
   Then frame_count frame entries, each:
     [0..4]   compressed_size
-    [4..4+N] raw LZMA2 payload (decompresses to width*height*4 bytes of BGRA)
+    [4]      flags (bit 0: keyframe)
+    [5..5+N] raw LZMA2 payload (BGRA keyframe or XOR delta)
 
 Uses raw LZMA2 streams (FORMAT_RAW + FILTER_LZMA2) so the bare-metal
 target can decode with the pure-Rust `lzma-rust2` crate (no std, no sha2).
@@ -29,7 +30,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-HEADER_MAGIC = b"DLV1"
+HEADER_MAGIC = b"DLV2"
 HEADER_LEN = 28
 
 
@@ -98,15 +99,19 @@ def build_dlv(args: argparse.Namespace, raw_path: Path, out_path: Path) -> None:
     with open(out_path, "wb") as f:
         f.write(HEADER_MAGIC)
         f.write(struct.pack("<IIIIII", w, h, args.fps, 1, total_frames, 0))
+        previous = None
         for i in range(total_frames):
             frame = raw[i * frame_size : (i + 1) * frame_size]
+            keyframe = previous is None or i % 30 == 0
+            encoded = frame if keyframe else bytes(a ^ b for a, b in zip(frame, previous))
             compressed = lzma.compress(
-                frame,
+                encoded,
                 format=lzma.FORMAT_RAW,
                 filters=[{"id": lzma.FILTER_LZMA2, "preset": 6}],
             )
-            f.write(struct.pack("<I", len(compressed)))
+            f.write(struct.pack("<IB", len(compressed), 1 if keyframe else 0))
             f.write(compressed)
+            previous = frame
             if (i + 1) % 25 == 0:
                 print(f"  encoded frame {i + 1}/{total_frames}", file=sys.stderr)
 

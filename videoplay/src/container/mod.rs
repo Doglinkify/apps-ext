@@ -1,10 +1,9 @@
 //! Container (de)muxer interface and implementations.
 
+use alloc::vec::Vec;
+
 pub mod avi;
 pub mod dlv;
-
-use alloc::string::String;
-use alloc::vec::Vec;
 
 pub struct Frame {
     pub data: Vec<u8>,
@@ -25,5 +24,6 @@ pub trait Container {
     fn fps(&self) -> (u32, u32);
     fn codec_id(&self) -> CodecId;
     fn next_frame(&mut self) -> Option<Frame>;
-    fn seek(&mut self, frame_idx: usize);
+    /// Seek to a decodable position and return its actual frame index.
+    fn seek(&mut self, frame_idx: usize) -> usize;
 }

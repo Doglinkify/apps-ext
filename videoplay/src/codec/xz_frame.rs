@@ -8,12 +8,15 @@
 
 use crate::codec::{Codec, DecodeError, PixelFormat};
 use crate::container::Frame;
+use alloc::vec::Vec;
 
-pub struct XzFrameCodec;
+pub struct XzFrameCodec {
+    previous: Vec<u8>,
+}
 
 impl XzFrameCodec {
     pub fn new() -> Self {
-        Self
+        Self { previous: Vec::new() }
     }
 }
 
@@ -29,7 +32,8 @@ impl Codec for XzFrameCodec {
     }
 
     fn decode(&mut self, frame: &Frame, out: &mut [u8]) -> Result<(), DecodeError> {
-        let n = lzma2_decompress_into(&frame.data, out)?;
+        let mut decoded = vec![0u8; out.len()];
+        let n = lzma2_decompress_into(&frame.data, &mut decoded)?;
         if n != out.len() {
             return Err(alloc::format!(
                 "dlv: decompressed size mismatch ({} != {})",
@@ -37,8 +41,22 @@ impl Codec for XzFrameCodec {
                 out.len()
             ));
         }
+        if frame.keyframe {
+            out.copy_from_slice(&decoded);
+        } else {
+            if self.previous.len() != out.len() {
+                return Err("dlv: delta frame without previous frame".into());
+            }
+            for (dst, (delta, prev)) in out.iter_mut().zip(decoded.iter().zip(self.previous.iter())) {
+                *dst = *delta ^ *prev;
+            }
+        }
+        self.previous.clear();
+        self.previous.extend_from_slice(out);
         Ok(())
     }
+
+    fn reset(&mut self) { self.previous.clear(); }
 }
 
 fn lzma2_decompress_into(input: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {

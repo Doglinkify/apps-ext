@@ -1,7 +1,7 @@
 //! DLV (DoglinkOS Lossless Video) container — minimal custom format.
 //!
 //! File layout (all LE):
-//!   [0..4]   "DLV1"
+//!   [0..4]   "DLV1" (independent frames) or "DLV2" (delta frames)
 //!   [4..8]   width
 //!   [8..12]  height
 //!   [12..16] fps_num
@@ -20,7 +20,8 @@ use crate::container::{CodecId, Container, Frame};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-const MAGIC: &[u8; 4] = b"DLV1";
+const MAGIC_V1: &[u8; 4] = b"DLV1";
+const MAGIC_V2: &[u8; 4] = b"DLV2";
 const HEADER_LEN: usize = 28;
 
 pub struct Dlv {
@@ -31,6 +32,8 @@ pub struct Dlv {
     fps_den: u32,
     frame_count: usize,
     frame_offsets: Vec<usize>,
+    keyframes: Vec<bool>,
+    version: u8,
     cursor: usize,
 }
 
@@ -39,20 +42,21 @@ impl Dlv {
         if data.len() < HEADER_LEN {
             return Err("dlv: file too short for header".into());
         }
-        if &data[0..4] != MAGIC {
+        let version = if &data[0..4] == MAGIC_V1 { 1 } else if &data[0..4] == MAGIC_V2 { 2 } else {
             return Err("dlv: bad magic".into());
-        }
+        };
         let width = rd_u32(&data, 4);
         let height = rd_u32(&data, 8);
         let fps_num = rd_u32(&data, 12);
         let fps_den = rd_u32(&data, 16);
         let frame_count = rd_u32(&data, 20) as usize;
 
-        if width == 0 || height == 0 || fps_den == 0 {
+        if width == 0 || height == 0 || fps_den == 0 || frame_count == 0 {
             return Err("dlv: invalid header (zero width/height/fps_den)".into());
         }
 
         let mut offsets = Vec::with_capacity(frame_count);
+        let mut keyframes = Vec::with_capacity(frame_count);
         let mut pos = HEADER_LEN;
         for _ in 0..frame_count {
             if pos + 4 > data.len() {
@@ -60,7 +64,18 @@ impl Dlv {
             }
             let comp_size = rd_u32(&data, pos) as usize;
             offsets.push(pos);
-            pos += 4 + comp_size;
+            if version == 2 {
+                if pos + 5 > data.len() { return Err("dlv: truncated frame entry".into()); }
+                let keyframe = data[pos + 4] & 1 != 0;
+                if offsets.len() == 1 && !keyframe {
+                    return Err("dlv: first frame must be a keyframe".into());
+                }
+                keyframes.push(keyframe);
+                pos += 5 + comp_size;
+            } else {
+                keyframes.push(true);
+                pos += 4 + comp_size;
+            }
             if pos > data.len() {
                 return Err("dlv: truncated frame payload".into());
             }
@@ -74,6 +89,8 @@ impl Dlv {
             fps_den,
             frame_count,
             frame_offsets: offsets,
+            keyframes,
+            version,
             cursor: 0,
         })
     }
@@ -103,16 +120,21 @@ impl Container for Dlv {
         let off = self.frame_offsets[self.cursor];
         self.cursor += 1;
         let comp_size = rd_u32(&self.data, off) as usize;
-        let payload = &self.data[off + 4..off + 4 + comp_size];
+        let start = off + if self.version == 2 { 5 } else { 4 };
+        let payload = &self.data[start..start + comp_size];
         Some(Frame {
             data: payload.to_vec(),
-            keyframe: true,
+            keyframe: self.keyframes[self.cursor - 1],
         })
     }
 
-    fn seek(&mut self, frame_idx: usize) {
+    fn seek(&mut self, frame_idx: usize) -> usize {
         let clamped = frame_idx.min(self.frame_offsets.len().saturating_sub(1));
+        let clamped = if self.version == 2 {
+            (0..=clamped).rev().find(|&i| self.keyframes[i]).unwrap_or(0)
+        } else { clamped };
         self.cursor = clamped;
+        clamped
     }
 }
 

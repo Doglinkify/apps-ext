@@ -278,9 +278,10 @@ impl Container for Avi {
         Some(Frame { data, keyframe: true })
     }
 
-    fn seek(&mut self, frame_idx: usize) {
+    fn seek(&mut self, frame_idx: usize) -> usize {
         let clamped = frame_idx.min(self.frame_offsets.len().saturating_sub(1));
         self.cursor = clamped;
+        clamped
     }
 }
 

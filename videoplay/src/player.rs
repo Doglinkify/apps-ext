@@ -44,7 +44,11 @@ pub fn run(
         let now = backend.ticks_ms();
 
         if now > deadline + frame_period_ms(fps_num, fps_den) {
-            let _ = container.next_frame();
+            // Decode skipped frames as well: DLV2 delta frames depend on the
+            // previous decoded image even when it is not displayed.
+            if let Some(frame) = container.next_frame() {
+                let _ = codec.decode(&frame, &mut decode_buf);
+            }
             current_frame += 1;
             continue;
         }
@@ -63,12 +67,14 @@ pub fn run(
                 Action::SeekBackward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
                     current_frame = current_frame.saturating_sub(delta);
-                    container.seek(current_frame);
+                    current_frame = container.seek(current_frame);
+                    codec.reset();
                 }
                 Action::SeekForward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
                     current_frame = (current_frame + delta).min(total_frames - 1);
-                    container.seek(current_frame);
+                    current_frame = container.seek(current_frame);
+                    codec.reset();
                 }
                 Action::Open => {
                     ui.status = String::from("OPEN (re-launch with new path)");
@@ -116,13 +122,15 @@ pub fn run(
                 Action::SeekBackward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
                     current_frame = current_frame.saturating_sub(delta);
-                    container.seek(current_frame);
+                    current_frame = container.seek(current_frame);
+                    codec.reset();
                     continue;
                 }
                 Action::SeekForward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
                     current_frame = (current_frame + delta).min(total_frames - 1);
-                    container.seek(current_frame);
+                    current_frame = container.seek(current_frame);
+                    codec.reset();
                     continue;
                 }
                 Action::None => break,

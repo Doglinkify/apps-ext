@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Convert a regular video file to the DLV1 container.
+"""Convert a regular video file to the DLV2 container.
 
-DLV stores one raw LZMA2 stream per frame.  Frames are decoded by ffmpeg as
-BGRA pixels, then compressed independently so the resulting file can be read
+DLV2 stores keyframes and LZMA2-compressed XOR deltas between frames. Frames are decoded by ffmpeg as
+BGRA pixels, then compressed so the resulting file can be read
 by the no-std player (see ``src/container/dlv.rs`` and ``src/codec/xz_frame.rs``).
 """
 
@@ -20,7 +20,7 @@ from fractions import Fraction
 from pathlib import Path
 
 
-MAGIC = b"DLV1"
+MAGIC = b"DLV2"
 HEADER_LEN = 28
 U32_MAX = 0xFFFFFFFF
 
@@ -36,6 +36,8 @@ def parse_args() -> argparse.Namespace:
         choices=range(0, 10),
         help="LZMA2 compression preset (default: 6)",
     )
+    parser.add_argument("--keyframe-interval", type=int, default=30,
+                        help="insert a keyframe every N frames (default: 30)")
     return parser.parse_args()
 
 
@@ -110,6 +112,7 @@ def convert(args: argparse.Namespace) -> None:
         raise RuntimeError("ffmpeg was not found; install ffmpeg first") from exc
 
     frame_count = 0
+    previous = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="w+b", prefix=f".{output.name}.", suffix=".tmp", dir=output.parent, delete=False
@@ -135,15 +138,18 @@ def convert(args: argparse.Namespace) -> None:
                     raise RuntimeError(
                         f"ffmpeg produced a partial frame ({len(frame)} of {frame_size} bytes)"
                     )
+                keyframe = previous is None or frame_count % max(1, args.keyframe_interval) == 0
+                encoded = frame if keyframe else bytes(a ^ b for a, b in zip(frame, previous))
                 compressed = lzma.compress(
-                    frame,
+                    encoded,
                     format=lzma.FORMAT_RAW,
                     filters=[{"id": lzma.FILTER_LZMA2, "preset": args.preset}],
                 )
                 if len(compressed) > U32_MAX or frame_count >= U32_MAX:
                     raise RuntimeError("DLV frame count or compressed size exceeds u32")
-                temporary.write(struct.pack("<I", len(compressed)))
+                temporary.write(struct.pack("<IB", len(compressed), 1 if keyframe else 0))
                 temporary.write(compressed)
+                previous = frame
                 frame_count += 1
                 if frame_count % 25 == 0:
                     print(f"encoded frame {frame_count}", file=sys.stderr)

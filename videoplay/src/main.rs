@@ -61,9 +61,9 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     platform::dlos::sys_exit();
 }
 
-/// Heap size: 16 MiB.
+/// Heap size: 1 GiB.
 #[cfg(feature = "dlos")]
-const HEAP_SIZE: usize = 1 << 24;
+const HEAP_SIZE: usize = 1 << 30;
 
 #[cfg(feature = "dlos")]
 fn init_heap() {
@@ -154,24 +154,23 @@ fn main_inner() -> Result<(), alloc::string::String> {
         p
     };
 
-    let file_bytes = platform::load_file(&path)
-        .map_err(|e| alloc::format!("failed to open '{path}': {e}"))?;
+    let file_bytes =
+        platform::load_file(&path).map_err(|e| alloc::format!("failed to open '{path}': {e}"))?;
 
     if file_bytes.is_empty() {
         return Err("file is empty".into());
     }
 
-    let mut container: Box<dyn container::Container> =
-        if file_bytes.starts_with(b"RIFF")
-            && file_bytes.len() >= 12
-            && &file_bytes[8..12] == b"AVI "
-        {
-            Box::new(container::avi::Avi::from_bytes(file_bytes)?)
-        } else if file_bytes.starts_with(b"DLV1") {
-            Box::new(container::dlv::Dlv::from_bytes(file_bytes)?)
-        } else {
-            return Err("unknown file format (expected RIFF/AVI or DLV1)".into());
-        };
+    let mut container: Box<dyn container::Container> = if file_bytes.starts_with(b"RIFF")
+        && file_bytes.len() >= 12
+        && &file_bytes[8..12] == b"AVI "
+    {
+        Box::new(container::avi::Avi::from_bytes(file_bytes)?)
+    } else if file_bytes.starts_with(b"DLV1") || file_bytes.starts_with(b"DLV2") {
+        Box::new(container::dlv::Dlv::from_bytes(file_bytes)?)
+    } else {
+        return Err("unknown file format (expected RIFF/AVI or DLV1/DLV2)".into());
+    };
 
     let codec_id = container.codec_id();
     let mut codec: Box<dyn codec::Codec> = match codec_id {
