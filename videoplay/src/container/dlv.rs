@@ -42,7 +42,11 @@ impl Dlv {
         if data.len() < HEADER_LEN {
             return Err("dlv: file too short for header".into());
         }
-        let version = if &data[0..4] == MAGIC_V1 { 1 } else if &data[0..4] == MAGIC_V2 { 2 } else {
+        let version = if &data[0..4] == MAGIC_V1 {
+            1
+        } else if &data[0..4] == MAGIC_V2 {
+            2
+        } else {
             return Err("dlv: bad magic".into());
         };
         let width = rd_u32(&data, 4);
@@ -65,7 +69,9 @@ impl Dlv {
             let comp_size = rd_u32(&data, pos) as usize;
             offsets.push(pos);
             if version == 2 {
-                if pos + 5 > data.len() { return Err("dlv: truncated frame entry".into()); }
+                if pos + 5 > data.len() {
+                    return Err("dlv: truncated frame entry".into());
+                }
                 let keyframe = data[pos + 4] & 1 != 0;
                 if offsets.len() == 1 && !keyframe {
                     return Err("dlv: first frame must be a keyframe".into());
@@ -131,8 +137,13 @@ impl Container for Dlv {
     fn seek(&mut self, frame_idx: usize) -> usize {
         let clamped = frame_idx.min(self.frame_offsets.len().saturating_sub(1));
         let clamped = if self.version == 2 {
-            (0..=clamped).rev().find(|&i| self.keyframes[i]).unwrap_or(0)
-        } else { clamped };
+            (0..=clamped)
+                .rev()
+                .find(|&i| self.keyframes[i])
+                .unwrap_or(0)
+        } else {
+            clamped
+        };
         self.cursor = clamped;
         clamped
     }

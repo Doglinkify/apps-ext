@@ -40,8 +40,7 @@ pub fn run(
     let mut pause_offset: u64 = 0;
 
     'playback: while current_frame < total_frames || !ui.playing {
-        let frame_ms =
-            (current_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
+        let frame_ms = (current_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
 
         if !ui.playing {
             let action = action_for(backend.poll_key());
@@ -235,9 +234,9 @@ fn seek_to_frame(
         let frame = container
             .next_frame()
             .ok_or_else(|| alloc::format!("missing frame while seeking to {target}"))?;
-        codec.decode(&frame, decode_buf).map_err(|e| {
-            alloc::format!("decode error while seeking to frame {frame_idx}: {e}")
-        })?;
+        codec
+            .decode(&frame, decode_buf)
+            .map_err(|e| alloc::format!("decode error while seeking to frame {frame_idx}: {e}"))?;
     }
     Ok(())
 }
@@ -251,8 +250,7 @@ fn reset_timeline(
     fps_num: u32,
     fps_den: u32,
 ) {
-    let next_frame_ms =
-        (next_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
+    let next_frame_ms = (next_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
     *start_ticks = backend.ticks_ms().saturating_sub(next_frame_ms);
     *pause_offset = 0;
     if paused_at_ticks.is_some() {
@@ -260,13 +258,7 @@ fn reset_timeline(
     }
 }
 
-fn blit_and_render(
-    backend: &mut Backend,
-    decode_buf: &[u8],
-    vw: usize,
-    vh: usize,
-    ui: &UiState,
-) {
+fn blit_and_render(backend: &mut Backend, decode_buf: &[u8], vw: usize, vh: usize, ui: &UiState) {
     let fb = backend.framebuffer();
     let fw = fb.width;
     let fh = fb.height;

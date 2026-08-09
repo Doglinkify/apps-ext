@@ -15,7 +15,10 @@ pub struct MjpegCodec {
 
 impl MjpegCodec {
     pub fn new() -> Self {
-        Self { width: 0, height: 0 }
+        Self {
+            width: 0,
+            height: 0,
+        }
     }
 }
 

@@ -275,7 +275,10 @@ impl Container for Avi {
         let (off, len) = self.frame_offsets[self.cursor];
         self.cursor += 1;
         let data = self.data[off..off + len].to_vec();
-        Some(Frame { data, keyframe: true })
+        Some(Frame {
+            data,
+            keyframe: true,
+        })
     }
 
     fn seek(&mut self, frame_idx: usize) -> usize {

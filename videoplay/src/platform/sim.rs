@@ -95,7 +95,7 @@ impl SimBackend {
             start: Instant::now(),
             _sdl: sdl,
             canvas,
-            event_pump: event_pump,
+            event_pump,
             key_queue: std::collections::VecDeque::new(),
             frame_count: 0,
         }

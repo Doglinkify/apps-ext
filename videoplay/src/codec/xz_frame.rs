@@ -16,7 +16,9 @@ pub struct XzFrameCodec {
 
 impl XzFrameCodec {
     pub fn new() -> Self {
-        Self { previous: Vec::new() }
+        Self {
+            previous: Vec::new(),
+        }
     }
 }
 
@@ -47,7 +49,8 @@ impl Codec for XzFrameCodec {
             if self.previous.len() != out.len() {
                 return Err("dlv: delta frame without previous frame".into());
             }
-            for (dst, (delta, prev)) in out.iter_mut().zip(decoded.iter().zip(self.previous.iter())) {
+            for (dst, (delta, prev)) in out.iter_mut().zip(decoded.iter().zip(self.previous.iter()))
+            {
                 *dst = *delta ^ *prev;
             }
         }
@@ -56,7 +59,9 @@ impl Codec for XzFrameCodec {
         Ok(())
     }
 
-    fn reset(&mut self) { self.previous.clear(); }
+    fn reset(&mut self) {
+        self.previous.clear();
+    }
 }
 
 fn lzma2_decompress_into(input: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
