@@ -247,6 +247,10 @@ impl PlatformBackend for DlosBackend {
     fn poll_key(&mut self) -> Option<Key> {
         let b = sys_read_raw();
         if b == 0xff {
+            // The kernel reports no pending input with 0xff. Treat that as
+            // the end of the current key press so the next press of the same
+            // key is not discarded as a duplicate.
+            self.last_key = None;
             return None;
         }
         if self.last_key == Some(b) {
