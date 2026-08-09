@@ -39,19 +39,183 @@ pub fn run(
     let mut paused_at_ticks: Option<u64> = None;
     let mut pause_offset: u64 = 0;
 
-    'playback: while current_frame < total_frames || !ui.playing {
-        let frame_ms = (current_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
+    loop {
+        'playback: while current_frame < total_frames || !ui.playing {
+            let frame_ms = (current_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
 
-        if !ui.playing {
-            let action = action_for(backend.poll_key());
-            match action {
+            if !ui.playing {
+                let action = action_for(backend.poll_key());
+                match action {
+                    Action::Quit => backend.exit(),
+                    Action::TogglePlay => {
+                        ui.playing = true;
+                        ui.status = String::from("PLAYING");
+                        if let Some(t) = paused_at_ticks.take() {
+                            pause_offset = pause_offset.saturating_add(backend.ticks_ms() - t);
+                        }
+                    }
+                    Action::SeekBackward => {
+                        let delta = seconds_to_frames(5, fps_num, fps_den);
+                        let displayed_frame = current_frame.saturating_sub(1);
+                        let target = displayed_frame.saturating_sub(delta);
+                        seek_to_frame(container, codec, &mut decode_buf, target)?;
+                        ui.current_frame = target;
+                        current_frame = target.saturating_add(1);
+                        reset_timeline(
+                            backend,
+                            &mut start_ticks,
+                            &mut pause_offset,
+                            &mut paused_at_ticks,
+                            current_frame,
+                            fps_num,
+                            fps_den,
+                        );
+                    }
+                    Action::SeekForward => {
+                        let delta = seconds_to_frames(5, fps_num, fps_den);
+                        let displayed_frame = current_frame.saturating_sub(1);
+                        let target = displayed_frame.saturating_add(delta).min(total_frames - 1);
+                        seek_to_frame(container, codec, &mut decode_buf, target)?;
+                        ui.current_frame = target;
+                        current_frame = target.saturating_add(1);
+                        reset_timeline(
+                            backend,
+                            &mut start_ticks,
+                            &mut pause_offset,
+                            &mut paused_at_ticks,
+                            current_frame,
+                            fps_num,
+                            fps_den,
+                        );
+                    }
+                    Action::Open => {
+                        ui.status = String::from("OPEN (re-launch with new path)");
+                        backend.print("\nvideoplay: 'O' pressed — re-launch with new path\n");
+                        backend.exit();
+                    }
+                    Action::None => {}
+                }
+
+                ui.current_frame = current_frame.saturating_sub(1);
+                blit_and_render(backend, &decode_buf, vw, vh, &ui);
+                backend.present();
+                backend.sleep_ms(16);
+                continue;
+            }
+
+            let deadline = start_ticks
+                .saturating_add(frame_ms)
+                .saturating_add(pause_offset);
+            let now = backend.ticks_ms();
+
+            if now > deadline.saturating_add(frame_period_ms(fps_num, fps_den)) {
+                // Decode skipped frames as well: DLV2 delta frames depend on the
+                // previous decoded image even when it is not displayed.
+                if let Some(frame) = container.next_frame() {
+                    let _ = codec.decode(&frame, &mut decode_buf);
+                }
+                current_frame += 1;
+                continue;
+            }
+
+            if now < deadline {
+                backend.sleep_ms(deadline - now);
+            }
+
+            let frame = match container.next_frame() {
+                Some(f) => f,
+                None => break,
+            };
+            if let Err(e) = codec.decode(&frame, &mut decode_buf) {
+                return Err(alloc::format!("decode error at frame {current_frame}: {e}"));
+            }
+
+            ui.current_frame = current_frame;
+            blit_and_render(backend, &decode_buf, vw, vh, &ui);
+            backend.present();
+
+            loop {
+                match action_for(backend.poll_key()) {
+                    Action::Quit => backend.exit(),
+                    Action::TogglePlay => {
+                        ui.playing = false;
+                        ui.status = String::from("PAUSED");
+                        paused_at_ticks = Some(backend.ticks_ms());
+                    }
+                    Action::Open => {
+                        backend.print("\nvideoplay: 'O' pressed — re-launch with new path\n");
+                        backend.exit();
+                    }
+                    Action::SeekBackward => {
+                        let delta = seconds_to_frames(5, fps_num, fps_den);
+                        let target = current_frame.saturating_sub(delta);
+                        seek_to_frame(container, codec, &mut decode_buf, target)?;
+                        ui.current_frame = target;
+                        current_frame = target.saturating_add(1);
+                        reset_timeline(
+                            backend,
+                            &mut start_ticks,
+                            &mut pause_offset,
+                            &mut paused_at_ticks,
+                            current_frame,
+                            fps_num,
+                            fps_den,
+                        );
+                        blit_and_render(backend, &decode_buf, vw, vh, &ui);
+                        backend.present();
+                        continue 'playback;
+                    }
+                    Action::SeekForward => {
+                        let delta = seconds_to_frames(5, fps_num, fps_den);
+                        let target = current_frame.saturating_add(delta).min(total_frames - 1);
+                        seek_to_frame(container, codec, &mut decode_buf, target)?;
+                        ui.current_frame = target;
+                        current_frame = target.saturating_add(1);
+                        reset_timeline(
+                            backend,
+                            &mut start_ticks,
+                            &mut pause_offset,
+                            &mut paused_at_ticks,
+                            current_frame,
+                            fps_num,
+                            fps_den,
+                        );
+                        blit_and_render(backend, &decode_buf, vw, vh, &ui);
+                        backend.present();
+                        continue 'playback;
+                    }
+                    Action::None => break,
+                }
+            }
+
+            current_frame += 1;
+        }
+
+        ui.status = String::from("END");
+        ui.playing = false;
+        loop {
+            ui.current_frame = current_frame.saturating_sub(1);
+            blit_and_render(backend, &decode_buf, vw, vh, &ui);
+            backend.present();
+            match action_for(backend.poll_key()) {
                 Action::Quit => backend.exit(),
                 Action::TogglePlay => {
                     ui.playing = true;
                     ui.status = String::from("PLAYING");
-                    if let Some(t) = paused_at_ticks.take() {
-                        pause_offset = pause_offset.saturating_add(backend.ticks_ms() - t);
-                    }
+                    reset_timeline(
+                        backend,
+                        &mut start_ticks,
+                        &mut pause_offset,
+                        &mut paused_at_ticks,
+                        current_frame,
+                        fps_num,
+                        fps_den,
+                    );
+                    break;
+                }
+                Action::Open => {
+                    backend.print("\nvideoplay: 'O' pressed — re-launch with new path\n");
+                    backend.exit();
                 }
                 Action::SeekBackward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
@@ -59,6 +223,7 @@ pub fn run(
                     let target = displayed_frame.saturating_sub(delta);
                     seek_to_frame(container, codec, &mut decode_buf, target)?;
                     ui.current_frame = target;
+                    ui.status = String::from("PAUSED");
                     current_frame = target.saturating_add(1);
                     reset_timeline(
                         backend,
@@ -76,6 +241,7 @@ pub fn run(
                     let target = displayed_frame.saturating_add(delta).min(total_frames - 1);
                     seek_to_frame(container, codec, &mut decode_buf, target)?;
                     ui.current_frame = target;
+                    ui.status = String::from("PAUSED");
                     current_frame = target.saturating_add(1);
                     reset_timeline(
                         backend,
@@ -86,125 +252,11 @@ pub fn run(
                         fps_num,
                         fps_den,
                     );
-                }
-                Action::Open => {
-                    ui.status = String::from("OPEN (re-launch with new path)");
-                    backend.print("\nvideoplay: 'O' pressed — re-launch with new path\n");
-                    backend.exit();
                 }
                 Action::None => {}
             }
-
-            ui.current_frame = current_frame.saturating_sub(1);
-            blit_and_render(backend, &decode_buf, vw, vh, &ui);
-            backend.present();
-            backend.sleep_ms(16);
-            continue;
+            backend.sleep_ms(50);
         }
-
-        let deadline = start_ticks
-            .saturating_add(frame_ms)
-            .saturating_add(pause_offset);
-        let now = backend.ticks_ms();
-
-        if now > deadline.saturating_add(frame_period_ms(fps_num, fps_den)) {
-            // Decode skipped frames as well: DLV2 delta frames depend on the
-            // previous decoded image even when it is not displayed.
-            if let Some(frame) = container.next_frame() {
-                let _ = codec.decode(&frame, &mut decode_buf);
-            }
-            current_frame += 1;
-            continue;
-        }
-
-        if now < deadline {
-            backend.sleep_ms(deadline - now);
-        }
-
-        let frame = match container.next_frame() {
-            Some(f) => f,
-            None => break,
-        };
-        if let Err(e) = codec.decode(&frame, &mut decode_buf) {
-            return Err(alloc::format!("decode error at frame {current_frame}: {e}"));
-        }
-
-        ui.current_frame = current_frame;
-        blit_and_render(backend, &decode_buf, vw, vh, &ui);
-        backend.present();
-
-        loop {
-            match action_for(backend.poll_key()) {
-                Action::Quit => backend.exit(),
-                Action::TogglePlay => {
-                    ui.playing = false;
-                    ui.status = String::from("PAUSED");
-                    paused_at_ticks = Some(backend.ticks_ms());
-                }
-                Action::Open => {
-                    backend.print("\nvideoplay: 'O' pressed — re-launch with new path\n");
-                    backend.exit();
-                }
-                Action::SeekBackward => {
-                    let delta = seconds_to_frames(5, fps_num, fps_den);
-                    let target = current_frame.saturating_sub(delta);
-                    seek_to_frame(container, codec, &mut decode_buf, target)?;
-                    ui.current_frame = target;
-                    current_frame = target.saturating_add(1);
-                    reset_timeline(
-                        backend,
-                        &mut start_ticks,
-                        &mut pause_offset,
-                        &mut paused_at_ticks,
-                        current_frame,
-                        fps_num,
-                        fps_den,
-                    );
-                    blit_and_render(backend, &decode_buf, vw, vh, &ui);
-                    backend.present();
-                    continue 'playback;
-                }
-                Action::SeekForward => {
-                    let delta = seconds_to_frames(5, fps_num, fps_den);
-                    let target = current_frame.saturating_add(delta).min(total_frames - 1);
-                    seek_to_frame(container, codec, &mut decode_buf, target)?;
-                    ui.current_frame = target;
-                    current_frame = target.saturating_add(1);
-                    reset_timeline(
-                        backend,
-                        &mut start_ticks,
-                        &mut pause_offset,
-                        &mut paused_at_ticks,
-                        current_frame,
-                        fps_num,
-                        fps_den,
-                    );
-                    blit_and_render(backend, &decode_buf, vw, vh, &ui);
-                    backend.present();
-                    continue 'playback;
-                }
-                Action::None => break,
-            }
-        }
-
-        current_frame += 1;
-    }
-
-    ui.status = String::from("END");
-    ui.playing = false;
-    loop {
-        ui.current_frame = current_frame.saturating_sub(1);
-        blit_and_render(backend, &decode_buf, vw, vh, &ui);
-        backend.present();
-        match action_for(backend.poll_key()) {
-            Action::Quit | Action::TogglePlay => backend.exit(),
-            Action::Open => {
-                backend.print("\nvideoplay: 'O' pressed — re-launch with new path\n");
-                backend.exit();
-            }
-            _ => {}
-        }
-        backend.sleep_ms(50);
     }
 }
 
