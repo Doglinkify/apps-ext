@@ -32,12 +32,14 @@ pub fn run(
     ui.status = alloc::string::String::from("PLAYING");
     ui.playing = true;
 
+    // `current_frame` is the next frame to decode. Keeping it separate from
+    // the frame in `decode_buf` lets a seek display its target immediately.
     let mut current_frame: usize = 0;
-    let start_ticks = backend.ticks_ms();
+    let mut start_ticks = backend.ticks_ms();
     let mut paused_at_ticks: Option<u64> = None;
     let mut pause_offset: u64 = 0;
 
-    while current_frame < total_frames {
+    'playback: while current_frame < total_frames || !ui.playing {
         let frame_ms =
             (current_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
 
@@ -54,15 +56,37 @@ pub fn run(
                 }
                 Action::SeekBackward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
-                    current_frame = current_frame.saturating_sub(delta);
-                    current_frame = container.seek(current_frame);
-                    codec.reset();
+                    let displayed_frame = current_frame.saturating_sub(1);
+                    let target = displayed_frame.saturating_sub(delta);
+                    seek_to_frame(container, codec, &mut decode_buf, target)?;
+                    ui.current_frame = target;
+                    current_frame = target.saturating_add(1);
+                    reset_timeline(
+                        backend,
+                        &mut start_ticks,
+                        &mut pause_offset,
+                        &mut paused_at_ticks,
+                        current_frame,
+                        fps_num,
+                        fps_den,
+                    );
                 }
                 Action::SeekForward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
-                    current_frame = (current_frame + delta).min(total_frames - 1);
-                    current_frame = container.seek(current_frame);
-                    codec.reset();
+                    let displayed_frame = current_frame.saturating_sub(1);
+                    let target = displayed_frame.saturating_add(delta).min(total_frames - 1);
+                    seek_to_frame(container, codec, &mut decode_buf, target)?;
+                    ui.current_frame = target;
+                    current_frame = target.saturating_add(1);
+                    reset_timeline(
+                        backend,
+                        &mut start_ticks,
+                        &mut pause_offset,
+                        &mut paused_at_ticks,
+                        current_frame,
+                        fps_num,
+                        fps_den,
+                    );
                 }
                 Action::Open => {
                     ui.status = String::from("OPEN (re-launch with new path)");
@@ -72,7 +96,7 @@ pub fn run(
                 Action::None => {}
             }
 
-            ui.current_frame = current_frame;
+            ui.current_frame = current_frame.saturating_sub(1);
             blit_and_render(backend, &decode_buf, vw, vh, &ui);
             backend.present();
             backend.sleep_ms(16);
@@ -124,17 +148,41 @@ pub fn run(
                 }
                 Action::SeekBackward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
-                    current_frame = current_frame.saturating_sub(delta);
-                    current_frame = container.seek(current_frame);
-                    codec.reset();
-                    continue;
+                    let target = current_frame.saturating_sub(delta);
+                    seek_to_frame(container, codec, &mut decode_buf, target)?;
+                    ui.current_frame = target;
+                    current_frame = target.saturating_add(1);
+                    reset_timeline(
+                        backend,
+                        &mut start_ticks,
+                        &mut pause_offset,
+                        &mut paused_at_ticks,
+                        current_frame,
+                        fps_num,
+                        fps_den,
+                    );
+                    blit_and_render(backend, &decode_buf, vw, vh, &ui);
+                    backend.present();
+                    continue 'playback;
                 }
                 Action::SeekForward => {
                     let delta = seconds_to_frames(5, fps_num, fps_den);
-                    current_frame = (current_frame + delta).min(total_frames - 1);
-                    current_frame = container.seek(current_frame);
-                    codec.reset();
-                    continue;
+                    let target = current_frame.saturating_add(delta).min(total_frames - 1);
+                    seek_to_frame(container, codec, &mut decode_buf, target)?;
+                    ui.current_frame = target;
+                    current_frame = target.saturating_add(1);
+                    reset_timeline(
+                        backend,
+                        &mut start_ticks,
+                        &mut pause_offset,
+                        &mut paused_at_ticks,
+                        current_frame,
+                        fps_num,
+                        fps_den,
+                    );
+                    blit_and_render(backend, &decode_buf, vw, vh, &ui);
+                    backend.present();
+                    continue 'playback;
                 }
                 Action::None => break,
             }
@@ -170,6 +218,46 @@ fn frame_period_ms(fps_num: u32, fps_den: u32) -> u64 {
 
 fn seconds_to_frames(sec: u32, fps_num: u32, fps_den: u32) -> usize {
     (sec as u64 * fps_num as u64 / fps_den.max(1) as u64) as usize
+}
+
+fn seek_to_frame(
+    container: &mut dyn Container,
+    codec: &mut dyn Codec,
+    decode_buf: &mut [u8],
+    target: usize,
+) -> Result<(), String> {
+    let actual = container.seek(target);
+    codec.reset();
+
+    // DLV2 can only restart from a keyframe. Decode any intervening delta
+    // frames so the target has the same decoder state as sequential playback.
+    for frame_idx in actual..=target {
+        let frame = container
+            .next_frame()
+            .ok_or_else(|| alloc::format!("missing frame while seeking to {target}"))?;
+        codec.decode(&frame, decode_buf).map_err(|e| {
+            alloc::format!("decode error while seeking to frame {frame_idx}: {e}")
+        })?;
+    }
+    Ok(())
+}
+
+fn reset_timeline(
+    backend: &Backend,
+    start_ticks: &mut u64,
+    pause_offset: &mut u64,
+    paused_at_ticks: &mut Option<u64>,
+    next_frame: usize,
+    fps_num: u32,
+    fps_den: u32,
+) {
+    let next_frame_ms =
+        (next_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
+    *start_ticks = backend.ticks_ms().saturating_sub(next_frame_ms);
+    *pause_offset = 0;
+    if paused_at_ticks.is_some() {
+        *paused_at_ticks = Some(backend.ticks_ms());
+    }
 }
 
 fn blit_and_render(
