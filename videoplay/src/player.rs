@@ -40,18 +40,6 @@ pub fn run(
     while current_frame < total_frames {
         let frame_ms =
             (current_frame as u64 * 1000 * fps_den as u64) / (fps_num.max(1) as u64);
-        let deadline = start_ticks + frame_ms - pause_offset;
-        let now = backend.ticks_ms();
-
-        if now > deadline + frame_period_ms(fps_num, fps_den) {
-            // Decode skipped frames as well: DLV2 delta frames depend on the
-            // previous decoded image even when it is not displayed.
-            if let Some(frame) = container.next_frame() {
-                let _ = codec.decode(&frame, &mut decode_buf);
-            }
-            current_frame += 1;
-            continue;
-        }
 
         if !ui.playing {
             let action = action_for(backend.poll_key());
@@ -61,7 +49,7 @@ pub fn run(
                     ui.playing = true;
                     ui.status = String::from("PLAYING");
                     if let Some(t) = paused_at_ticks.take() {
-                        pause_offset += backend.ticks_ms() - t;
+                        pause_offset = pause_offset.saturating_add(backend.ticks_ms() - t);
                     }
                 }
                 Action::SeekBackward => {
@@ -88,6 +76,21 @@ pub fn run(
             blit_and_render(backend, &decode_buf, vw, vh, &ui);
             backend.present();
             backend.sleep_ms(16);
+            continue;
+        }
+
+        let deadline = start_ticks
+            .saturating_add(frame_ms)
+            .saturating_add(pause_offset);
+        let now = backend.ticks_ms();
+
+        if now > deadline.saturating_add(frame_period_ms(fps_num, fps_den)) {
+            // Decode skipped frames as well: DLV2 delta frames depend on the
+            // previous decoded image even when it is not displayed.
+            if let Some(frame) = container.next_frame() {
+                let _ = codec.decode(&frame, &mut decode_buf);
+            }
+            current_frame += 1;
             continue;
         }
 

@@ -111,7 +111,9 @@ impl SimBackend {
             match ev {
                 Event::Quit { .. } => self.key_queue.push_back(Key::Q),
                 Event::KeyDown {
-                    keycode: Some(kc), ..
+                    keycode: Some(kc),
+                    repeat: false,
+                    ..
                 } => match kc {
                     Keycode::Space => self.key_queue.push_back(Key::Space),
                     Keycode::Q => self.key_queue.push_back(Key::Q),

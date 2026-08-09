@@ -36,18 +36,18 @@ All shared code uses `core::` and `alloc::` only.
 ```
 start_ticks = backend.ticks_ms()
 for current_frame in 0..total_frames:
-    deadline = start_ticks + current_frame * (1000 * fps_den / fps_num) - pause_offset
+    deadline = start_ticks + current_frame * (1000 * fps_den / fps_num) + pause_offset
     now = backend.ticks_ms()
-
-    # If we're more than one frame behind, skip this frame.
-    if now > deadline + frame_period:
-        container.next_frame()  # discard
-        continue
 
     # If we're paused, just poll keys and re-render.
     if not playing:
         poll keys
         render UI
+        continue
+
+    # If we're more than one frame behind, skip this frame.
+    if now > deadline + frame_period:
+        container.next_frame()  # discard
         continue
 
     # If we're early, sleep until the deadline.
