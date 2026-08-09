@@ -216,6 +216,18 @@ pub fn load_file(path: &str) -> Result<Vec<u8>, String> {
 
 pub struct DlosBackend {
     last_key: Option<u8>,
+    // Arrow keys arrive from the terminal as multi-byte ANSI sequences. Keep
+    // enough state across non-blocking polls to avoid treating their ESC
+    // prefix as the quit key.
+    escape_state: EscapeState,
+    pending_key: Option<u8>,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum EscapeState {
+    None,
+    Escape,
+    Csi,
 }
 
 impl DlosBackend {
@@ -224,7 +236,11 @@ impl DlosBackend {
             eprint_raw("videoplay: no framebuffer available from kernel\n");
             sys_exit();
         }
-        Self { last_key: None }
+        Self {
+            last_key: None,
+            escape_state: EscapeState::None,
+            pending_key: None,
+        }
     }
 }
 
@@ -245,18 +261,57 @@ impl PlatformBackend for DlosBackend {
     }
 
     fn poll_key(&mut self) -> Option<Key> {
-        let b = sys_read_raw();
+        let b = self.pending_key.take().unwrap_or_else(sys_read_raw);
         if b == 0xff {
             // The kernel reports no pending input with 0xff. Treat that as
             // the end of the current key press so the next press of the same
             // key is not discarded as a duplicate.
             self.last_key = None;
-            return None;
+            return match self.escape_state {
+                // A standalone Escape key has no following byte. Delay it by
+                // one poll so an ANSI arrow sequence can be recognized.
+                EscapeState::Escape => {
+                    self.escape_state = EscapeState::None;
+                    Some(Key::Escape)
+                }
+                EscapeState::Csi => {
+                    self.escape_state = EscapeState::None;
+                    None
+                }
+                EscapeState::None => None,
+            };
         }
+
+        match self.escape_state {
+            EscapeState::Escape => {
+                if b == b'[' || b == b'O' {
+                    self.escape_state = EscapeState::Csi;
+                    return None;
+                }
+                self.escape_state = EscapeState::None;
+                self.pending_key = Some(b);
+                self.last_key = None;
+                return Some(Key::Escape);
+            }
+            EscapeState::Csi => {
+                self.escape_state = EscapeState::None;
+                return match b {
+                    b'C' => Some(Key::Right),
+                    b'D' => Some(Key::Left),
+                    _ => None,
+                };
+            }
+            EscapeState::None => {}
+        }
+
         if self.last_key == Some(b) {
             return None;
         }
         self.last_key = Some(b);
+        if b == 0x1b {
+            self.escape_state = EscapeState::Escape;
+            return None;
+        }
         Some(byte_to_key(b))
     }
 
