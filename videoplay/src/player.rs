@@ -4,7 +4,7 @@
 use crate::codec::Codec;
 use crate::container::Container;
 use crate::input::{action_for, Action};
-use crate::platform::{Backend, PlatformBackend};
+use crate::platform::{Backend, FramebufferInfo, PlatformBackend};
 use crate::ui::UiState;
 
 use alloc::string::String;
@@ -24,6 +24,17 @@ pub fn run(
     }
 
     let mut decode_buf = vec![0u8; vw * vh * 4];
+
+    // Drawing directly into the kernel's scanout framebuffer exposes every
+    // intermediate step (clear, scale, and overlay) to the display.  DLOS
+    // does not provide page flipping, so render the complete frame offscreen
+    // and publish it with one row-wise copy instead.
+    let initial_fb = backend.framebuffer();
+    if initial_fb.width == 0 || initial_fb.height == 0 || initial_fb.pitch < initial_fb.width * 4 {
+        return Err("backend reported an invalid framebuffer".into());
+    }
+    let render_pitch = initial_fb.pitch;
+    let mut render_buf = vec![0u8; render_pitch * initial_fb.height];
 
     let mut ui = UiState::new();
     ui.total_frames = total_frames;
@@ -97,7 +108,15 @@ pub fn run(
                 }
 
                 ui.current_frame = current_frame.saturating_sub(1);
-                blit_and_render(backend, &decode_buf, vw, vh, &ui);
+                blit_and_render(
+                    backend,
+                    &decode_buf,
+                    vw,
+                    vh,
+                    &ui,
+                    &mut render_buf,
+                    render_pitch,
+                );
                 backend.present();
                 backend.sleep_ms(16);
                 continue;
@@ -131,7 +150,15 @@ pub fn run(
             }
 
             ui.current_frame = current_frame;
-            blit_and_render(backend, &decode_buf, vw, vh, &ui);
+            blit_and_render(
+                backend,
+                &decode_buf,
+                vw,
+                vh,
+                &ui,
+                &mut render_buf,
+                render_pitch,
+            );
             backend.present();
 
             loop {
@@ -161,7 +188,15 @@ pub fn run(
                             fps_num,
                             fps_den,
                         );
-                        blit_and_render(backend, &decode_buf, vw, vh, &ui);
+                        blit_and_render(
+                            backend,
+                            &decode_buf,
+                            vw,
+                            vh,
+                            &ui,
+                            &mut render_buf,
+                            render_pitch,
+                        );
                         backend.present();
                         continue 'playback;
                     }
@@ -180,7 +215,15 @@ pub fn run(
                             fps_num,
                             fps_den,
                         );
-                        blit_and_render(backend, &decode_buf, vw, vh, &ui);
+                        blit_and_render(
+                            backend,
+                            &decode_buf,
+                            vw,
+                            vh,
+                            &ui,
+                            &mut render_buf,
+                            render_pitch,
+                        );
                         backend.present();
                         continue 'playback;
                     }
@@ -195,7 +238,15 @@ pub fn run(
         ui.playing = false;
         loop {
             ui.current_frame = current_frame.saturating_sub(1);
-            blit_and_render(backend, &decode_buf, vw, vh, &ui);
+            blit_and_render(
+                backend,
+                &decode_buf,
+                vw,
+                vh,
+                &ui,
+                &mut render_buf,
+                render_pitch,
+            );
             backend.present();
             match action_for(backend.poll_key()) {
                 Action::Quit => backend.exit(),
@@ -310,8 +361,32 @@ fn reset_timeline(
     }
 }
 
-fn blit_and_render(backend: &mut Backend, decode_buf: &[u8], vw: usize, vh: usize, ui: &UiState) {
-    let fb = backend.framebuffer();
+fn blit_and_render(
+    backend: &mut Backend,
+    decode_buf: &[u8],
+    vw: usize,
+    vh: usize,
+    ui: &UiState,
+    render_buf: &mut [u8],
+    render_pitch: usize,
+) {
+    let target = backend.framebuffer();
+    // The framebuffer geometry is fixed for the lifetime of a DLOS app. If a
+    // backend ever changes it, keep the old frame rather than writing past
+    // the offscreen buffer.
+    if target.pitch != render_pitch
+        || target.width == 0
+        || target.height == 0
+        || render_buf.len() < render_pitch * target.height
+    {
+        return;
+    }
+    let fb = FramebufferInfo {
+        ptr: render_buf.as_mut_ptr(),
+        width: target.width,
+        height: target.height,
+        pitch: render_pitch,
+    };
     let fw = fb.width;
     let fh = fb.height;
 
@@ -358,4 +433,17 @@ fn blit_and_render(backend: &mut Backend, decode_buf: &[u8], vw: usize, vh: usiz
     }
 
     ui.render(&fb);
+
+    // Publish only after the complete frame (including the UI) is ready.
+    // Copying contiguous rows is substantially shorter than the rendering
+    // loop and prevents the pronounced clear/draw flicker on DLOS scanout.
+    for y in 0..fh {
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                render_buf.as_ptr().add(y * render_pitch),
+                target.ptr.add(y * target.pitch),
+                target.pitch,
+            );
+        }
+    }
 }
