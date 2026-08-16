@@ -17,6 +17,18 @@
 #![cfg_attr(feature = "dlos", no_std)]
 #![cfg_attr(feature = "dlos", no_main)]
 
+#[cfg(not(any(feature = "sim", feature = "dlos")))]
+compile_error!("Either the \"sim\" or \"dlos\" feature must be enabled.");
+
+#[cfg(all(feature = "sim", feature = "dlos"))]
+compile_error!("The \"sim\" and \"dlos\" features are mutually exclusive.");
+
+#[cfg(all(feature = "sim", not(target_os = "linux")))]
+compile_error!("The \"sim\" feature requires a Linux target OS.");
+
+#[cfg(all(feature = "dlos", not(all(target_arch = "x86_64", target_os = "none"))))]
+compile_error!("The \"dlos\" feature requires the target triple x86_64-unknown-none.");
+
 // `alloc` is available on both targets (std re-exports it). `#[macro_use]`
 // brings the `vec!` / `format!` macros into scope for all submodules.
 #[cfg_attr(feature = "dlos", macro_use)]
