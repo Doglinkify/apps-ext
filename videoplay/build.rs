@@ -4,11 +4,6 @@
 // this script is a no-op when `--features dlos` is on.
 
 fn main() {
-    #[cfg(feature = "dlos")]
-    {
-        return;
-    }
-
     #[cfg(not(feature = "dlos"))]
     {
         if let Ok(prefix) = std::env::var("SDL2_PREFIX") {

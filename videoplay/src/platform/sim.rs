@@ -31,11 +31,10 @@ pub fn set_options(o: Options) {
 }
 
 pub fn options() -> Options {
-    OPTIONS
+    *OPTIONS
         .get_or_init(|| std::sync::Mutex::new(Options::default()))
         .lock()
         .unwrap()
-        .clone()
 }
 
 pub fn load_file(path: &str) -> Result<Vec<u8>, String> {
@@ -63,7 +62,7 @@ impl SimBackend {
         let (w, h) = (640, 480);
 
         let mut buf = vec![0u8; w * h * 4];
-        for px in buf.chunks_exact_mut(4) {
+        for px in buf.as_chunks_mut::<4>().0 {
             px[0] = 0x12;
             px[1] = 0x12;
             px[2] = 0x12;

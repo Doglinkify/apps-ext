@@ -242,10 +242,10 @@ impl Avi {
 
 impl Container for Avi {
     fn width(&self) -> u32 {
-        self.main_header.width.max(0) as u32
+        self.main_header.width
     }
     fn height(&self) -> u32 {
-        self.main_header.height.max(0) as u32
+        self.main_header.height
     }
     fn frame_count(&self) -> usize {
         let from_stream = self.stream_header.length as usize;
