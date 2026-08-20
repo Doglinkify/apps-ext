@@ -60,4 +60,4 @@ SHA-2 / CRC64 (which don't currently compile on `x86_64-unknown-none`).
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+GPL-3.0-only — see [`LICENSE`](LICENSE).
